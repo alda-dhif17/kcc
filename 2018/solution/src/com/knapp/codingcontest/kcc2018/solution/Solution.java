@@ -52,7 +52,7 @@ public class Solution {
   }
 
   // ----------------------------------------------------------------------------
-
+  int _i;
   public void runWarehouseOperations() {
     System.out.println("### Your output starts here");
 
@@ -72,7 +72,9 @@ public class Solution {
 
   private void solve(){
     //do every order
-    for(Order order : warehouse.getOrders()){
+    for(int i = 0; i < warehouse.getOrders().size(); i++){
+      _i = i;
+      Order order = warehouse.getOrders().get(i);
       String pCode = order.getProductCode();
       int quantity = order.getRequestedQuantity();
 
@@ -91,25 +93,53 @@ public class Solution {
         //move shuttle to container's position
         warehouse.getShuttle().moveToPosition(container.getLocation().getPosition());
 
+        Location nearestEmptyLocation = null;
+
         //check if container is reachable
         if(!container.getLocation().isReachable(container)){
           //make container reachable
+          nearestEmptyLocation = getNextEmptyLocation(container.getLocation());
+          //load blocking container
+          warehouse.getShuttle().loadFrom(container.getLocation(), container.getLocation().getContainers().get(0));
+          //move shuttle to empty location
+          warehouse.getShuttle().moveToPosition(nearestEmptyLocation.getPosition());
+          //put box into empty position
+          warehouse.getShuttle().storeTo(nearestEmptyLocation);
+          //move shuttle back to location where the needed item is located
+          warehouse.getShuttle().moveToPosition(container.getLocation().getPosition());
         }
 
         //take container
         warehouse.getShuttle().loadFrom(container.getLocation(), container);
 
+        //go to workstation in order to deliver the goods
+        warehouse.getShuttle().moveToPosition(warehouse.getWorkStation());
+        warehouse.getWorkStation().pickOrder(order);
+
+        //be careful with last order as a null pointer will occur
+        if(i == warehouse.getOrders().size() - 1 && order.getRemainingQuantity() == 0){
+          //finish off process
+          finish();
+          break;
+        }
+
+        nearestEmptyLocation = getNextEmptyLocationByNextProduct(warehouse.getOrders().get(i == warehouse.getOrders().size() - 1 ? i : (i + 1)));
+        //move shuttle there
+        warehouse.getShuttle().moveToPosition(nearestEmptyLocation.getPosition());
+        //put box in there
+        warehouse.getShuttle().storeTo(nearestEmptyLocation);
+
       }while(order.getRemainingQuantity() > 0);
 
-      break;
     }
+
   }
 
   private Container getContainerbyProductCode(String pCode, int quantity){
     Container bestContainer = null;
 
     for(Container container : warehouse.getAllContainers()){
-      if(container.isEmpty()){
+      if(container.isEmpty() || container.getLocation() == null){
         continue;
       }
 
@@ -133,14 +163,11 @@ public class Solution {
 
   private Location getNextEmptyLocation(Location loc){
     //get all locations with at least one empty space
-    List<Location> fittingLocations = warehouse.getAllContainers().stream()
-            .map(Container::getLocation)
-            .filter(l -> l.getRemainingContainerCapacity() > 0)
-            .collect(Collectors.toList());
+    List<Location> fittingLocations = getAllLocations().stream().filter(l -> l.getRemainingContainerCapacity() > 0).collect(Collectors.toList());
 
     //get costs to each empty container (sorted => best location is at index = 0)
-    long lowestCost = 0;
-    Location bestLocation = null;
+    long lowestCost = warehouse.calcMoveCost(loc, fittingLocations.get(0));
+    Location bestLocation = fittingLocations.get(0);
     for(Location location : fittingLocations){
       long cost = warehouse.calcMoveCost(loc, location);
       if(cost < lowestCost){
@@ -150,6 +177,50 @@ public class Solution {
     }
 
     return bestLocation;
+  }
+
+  private Location getNextEmptyLocationByNextProduct(Order order){
+    //get best fitting container for next order
+    Container container = getContainerbyProductCode(order.getProductCode(), order.getRequestedQuantity());
+
+    //get best fitting next empty space
+    Location nearestEmptyLocation = getNextEmptyLocation(container.getLocation());
+
+    return nearestEmptyLocation;
+  }
+
+  private void finish(){
+    List<Location> emptyLocations = getAllLocations().stream().filter(l -> l.getRemainingContainerCapacity() > 0).collect(Collectors.toList());
+
+
+    //calculate best option
+    Location locNearWorkstation = warehouse.getAisle(2).getLocation(0, Aisle.Side.Left);
+    long lowestCost = warehouse.calcMoveCost(locNearWorkstation, emptyLocations.get(0));
+    Location bestLocation = emptyLocations.get(0);
+    for(Location location : emptyLocations){
+      long cost = warehouse.calcMoveCost(locNearWorkstation, location);
+      if(cost < lowestCost){
+        bestLocation = location;
+        lowestCost = cost;
+      }
+    }
+
+    warehouse.getShuttle().moveToPosition(bestLocation.getPosition());
+    warehouse.getShuttle().storeTo(bestLocation);
+    warehouse.getShuttle().moveToPosition(warehouse.getWorkStation());
+  }
+
+  private List<Location> getAllLocations(){
+    List<Location> all = new ArrayList<>();
+
+    Arrays.stream(warehouse.getAisles())
+            .forEach(a -> {
+              a.getLocations().stream().forEach(l -> {
+                all.add(l);
+              });
+            });
+
+    return all;
   }
 
   // ----------------------------------------------------------------------------
